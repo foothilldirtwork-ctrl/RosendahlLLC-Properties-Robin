@@ -96,10 +96,11 @@ function backup(){let blob=new Blob([JSON.stringify(db,null,2)],{type:'applicati
 function restore(){let i=document.createElement('input');i.type='file';i.accept='.json,application/json';i.onchange=()=>{let r=new FileReader();r.onload=()=>{try{let x=JSON.parse(r.result);if(!x.properties)throw Error();db=x;save();render();toast('Backup restored')}catch(e){alert('Invalid Batman Ledger backup.')}};r.readAsText(i.files[0])};i.click()}
 function exportCSV(){let rows=[['Type','Date','Property','Category','Description','Amount','Frequency']];db.incomes.forEach(x=>rows.push(['Income',x.date,prop(x.propertyId)?.address||'',x.category,x.description,x.amount,x.frequency]));db.expenses.forEach(x=>rows.push(['Expense',x.date,prop(x.propertyId)?.address||'',x.category,x.description,x.amount,x.frequency]));let csv=rows.map(r=>r.map(v=>`"${String(v??'').replaceAll('"','""')}"`).join(',')).join('\\n'),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='batman-ledger.csv';a.click()}
 if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js'));
-render();
+
   const SUPABASE_URL = 'https://mkqiirtyviqiauwogegm.supabase.co';⁠
   const SUPABASE_KEY = 'sb_publishable_L16YEg2_G7RKTU0a1LzYFw_YUHmpGKe';
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);⁠
+  render();
 </script>
 </body>
 </html>
