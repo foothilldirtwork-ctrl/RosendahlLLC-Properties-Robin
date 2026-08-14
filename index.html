@@ -17,7 +17,7 @@
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink)}
 body{background:repeating-linear-gradient(to bottom,var(--paper) 0 40px,var(--stripe) 40px 80px)}
 button,input,select,textarea{font:inherit}button{border:0}.app{max-width:1100px;margin:auto;padding-bottom:90px}
-header{position:sticky;top:0;z-index:20;background:var(--bat);color:#fff;padding:12px 14px 99px;border-bottom:4px solid var(--yellow);padding-top:max(12px,env(safe-area-inset-top))}
+header{position:sticky;top:0;z-index:20;background:var(--bat);color:#fff;padding:12px 14px 12px;border-bottom:4px solid var(--yellow);padding-top:max(12px,env(safe-area-inset-top))}
 h1{font-size:20px;margin:0;display:flex;align-items:center;gap:9px}.bat{width:30px;height:19px;background:var(--yellow);clip-path:polygon(0 50%,15% 0,35% 40%,50% 15%,65% 40%,85% 0,100% 50%,85% 85%,65% 60%,50% 85%,35% 60%,15% 85%)}
 .summary{font:11px ui-monospace,monospace;color:#ccc;margin-top:4px}.tabs{display:flex;gap:6px;margin-top:9px;overflow:auto;padding-bottom:1px}.tab{white-space:nowrap;background:#222;color:#eee;border:1px solid #444;border-radius:18px;padding:7px 11px;font-size:12px;font-weight:700}.tab.active{background:var(--yellow);color:#000;border-color:var(--yellow)}
 .controls{padding:10px 14px 0;display:flex;gap:7px;flex-wrap:wrap}.controls>*{min-height:36px}.controls input,.controls select{flex:1;min-width:130px}
@@ -47,15 +47,61 @@ footer{position:fixed;bottom:0;left:0;right:0;background:#111;color:#ddd;text-al
 <div id="alerts"></div>
 <main id="content"></main>
 </div>
-<footer>Offline-ready • Changes save automatically on this device</footer>
+<footer>Offline-ready • Changes save automatically</footer>
 <div id="modal"></div><div id="toast" class="toast"></div>
+
 <script>
-  const KEY='batman-ledger-v3';
-  let db=JSON.parse(localStorage.getItem(KEY)||'{"properties":[],"maintenance":[],"expenses":[],"incomes":[],"settings":{"manager":""}}');
-  if(!db.properties)db.properties=[];if(!db.maintenance)db.maintenance=[];if(!db.expenses)db.expenses=[];if(!db.incomes)db.incomes=[];
-  let state={tab:'dashboard',search:'',rent:'all',urgency:'all',prop:'all',cat:'all',year:'all',devDay:null};
-  const $=id=>document.getElementById(id), money=n=>'$'+Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-  function save(){localStorage.setItem(KEY,JSON.stringify(db));}
+  const KEY = 'batman-ledger-v3';
+  const SUPABASE_URL = 'https://mkqiirtyviqiauwogegm.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_L16YEg2_G7RKTU0a1LzYFw_YUHmpGKe';
+  
+  let supabaseClient = null;
+  if (window.supabase && typeof window.supabase.createClient === 'function') {
+    try {
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    } catch(e) {
+      console.error('Supabase init failed:', e);
+    }
+  }
+
+  let db = JSON.parse(localStorage.getItem(KEY) || '{"properties":[],"maintenance":[],"expenses":[],"incomes":[],"settings":{"manager":""}}');
+  if(!db.properties) db.properties = [];
+  if(!db.maintenance) db.maintenance = [];
+  if(!db.expenses) db.expenses = [];
+  if(!db.incomes) db.incomes = [];
+
+  let state = {tab:'dashboard', search:'', rent:'all', urgency:'all', prop:'all', cat:'all', year:'all', devDay:null};
+  const $ = id => document.getElementById(id), money = n => '$' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  async function save() {
+    saveLocally();
+    if (supabaseClient) {
+      try {
+        await supabaseClient.from('batman_ledger').upsert({ id: 'main', data: db });
+      } catch (err) {
+        console.error('Supabase sync error:', err);
+      }
+    }
+  }
+
+  async function loadRemote() {
+    if (!supabaseClient) return;
+    try {
+      let { data, error } = await supabaseClient.from('batman_ledger').select('data').eq('id', 'main').single();
+      if (data && data.data) {
+        db = data.data;
+        saveLocally();
+        render();
+      }
+    } catch (err) {
+      console.log('Using local cached data');
+    }
+  }
+
+  function saveLocally() {
+    localStorage.setItem(KEY, JSON.stringify(db));
+  }
+
   function id(p){return p+Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
   function today(){let d=new Date();return state.devDay?new Date(d.getFullYear(),d.getMonth(),state.devDay):d}
   function monthKey(d=today()){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')}
@@ -65,13 +111,20 @@ footer{position:fixed;bottom:0;left:0;right:0;background:#111;color:#ddd;text-al
   function prop(idv){return db.properties.find(p=>p.id===idv)}
   function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
   function toast(s){$('toast').textContent=s;$('toast').style.display='block';setTimeout(()=>$('toast').style.display='none',1800)}
-  function render(){renderTabs();renderSummary();renderControls();renderAlerts();({dashboard:renderDashboard,rent:renderRent,maintenance:renderMaintenance,accounting:renderAccounting,deposits:renderDeposits}[state.tab])()}
+  
+  function render(){
+    renderTabs();
+    renderSummary();
+    renderControls();
+    renderAlerts();
+    ({dashboard:renderDashboard,rent:renderRent,maintenance:renderMaintenance,accounting:renderAccounting,deposits:renderDeposits}[state.tab])();
+  }
+
   function renderTabs(){let late=db.properties.filter(p=>propStatus(p)[0]==='late').length,open=db.maintenance.filter(m=>m.status!=='completed').length,dep=db.properties.reduce((a,p)=>a+Number(p.depositAmount||0),0);$('tabs').innerHTML=[['dashboard','Dashboard'],['rent','Rent '+(late?'('+late+' late)':'')],['maintenance','Maintenance ('+open+')'],['accounting','Balance Sheet'],['deposits','Deposits '+(dep?money(dep):'')]].map(x=>`<button class="tab ${state.tab===x[0]?'active':''}" onclick="state.tab='${x[0]}';render()">${x[1]}</button>`).join('')}
   function renderSummary(){let rent=db.properties.reduce((a,p)=>a+Number(p.rent||0),0),mort=db.expenses.filter(e=>e.category==='mortgage').reduce((a,e)=>a+annual(e.amount,e.frequency),0),late=db.properties.filter(p=>propStatus(p)[0]==='late').length,pend=db.maintenance.filter(m=>m.status!=='completed').reduce((a,m)=>a+Number(m.cost||0),0),interest=db.properties.reduce((a,p)=>a+depInterest(p).interest,0);$('summary').innerHTML=`${db.properties.length} props • ${money(rent)}/mo rent • ${money(mort)}/yr mortgage • ${late?late+' late':'rent current'} • ${money(pend)} open repairs • ${money(interest)} deposit interest accrued`}
   function renderControls(){let opts=db.properties.map(p=>`<option value="${p.id}">${esc(p.address)}</option>`).join('');if(state.tab==='dashboard')$('controls').innerHTML=`<input placeholder="Search properties" value="${esc(state.search)}" oninput="state.search=this.value;renderDashboard()"><select onchange="state.devDay=this.value?+this.value:null;render()"><option value="">Today (${today().getDate()})</option><option value="1">Simulate 1st</option><option value="6">Simulate 6th (late)</option></select><button class="btn outline" onclick="backup()">Backup</button><button class="btn outline" onclick="restore()">Restore</button>`;else if(state.tab==='rent')$('controls').innerHTML=`<input placeholder="Search address/tenant" value="${esc(state.search)}" oninput="state.search=this.value;renderRent()"><select onchange="state.rent=this.value;renderRent()"><option value="all">All rent</option><option value="due">Due</option><option value="late">Late</option><option value="paid">Paid</option></select><button class="btn primary" onclick="openProperty()">+ Property</button>`;else if(state.tab==='maintenance')$('controls').innerHTML=`<input placeholder="Search repairs" value="${esc(state.search)}" oninput="state.search=this.value;renderMaintenance()"><select onchange="state.urgency=this.value;renderMaintenance()"><option value="all">All urgency</option><option>emergency</option><option>urgent</option><option>high</option><option>medium</option><option>low</option></select><select onchange="state.prop=this.value;renderMaintenance()"><option value="all">All properties</option>${opts}</select><button class="btn primary" onclick="openMaintenance()">+ Repair</button>`;else if(state.tab==='accounting')$('controls').innerHTML=`<select onchange="state.prop=this.value;renderAccounting()"><option value="all">All properties</option>${opts}</select><select onchange="state.cat=this.value;renderAccounting()"><option value="all">All categories</option><option value="rent">Rent</option><option value="tax">Tax</option><option value="insurance">Insurance</option><option value="mortgage">Mortgage</option><option value="utilities_water">Water</option><option value="utilities_sewer">Sewer</option><option value="utilities_garbage">Garbage</option><option value="maintenance">Maintenance</option><option value="other">Other</option></select><button class="btn yellow" onclick="openExpense()">+ Expense</button><button class="btn outline" onclick="exportCSV()">CSV</button>`;else $('controls').innerHTML=`<input placeholder="Search tenant/property" value="${esc(state.search)}" oninput="state.search=this.value;renderDeposits()"><button class="btn yellow" onclick="state.tab='rent';render()">Manage deposits in Properties</button>`}
   function renderAlerts(){let late=db.properties.filter(p=>propStatus(p)[0]==='late'),em=db.maintenance.filter(m=>m.necessity==='emergency'&&m.status!=='completed'),di=db.properties.filter(p=>depInterest(p).days>=365);let h='';if(late.length)h+=`<div class="alert late"><b>⚠ ${late.length} rent payment(s) are late after the 5th — ${money(late.reduce((a,p)=>a+Number(p.rent||0),0))} outstanding.</b></div>`;if(em.length)h+=`<div class="alert maint"><b>🔧 ${em.length} emergency repair(s) open — ${money(em.reduce((a,m)=>a+Number(m.cost||0),0))} estimated.</b></div>`;if(di.length)h+=`<div class="alert info"><b>💰 ${di.length} deposit(s) held 1+ year — ${money(di.reduce((a,p)=>a+depInterest(p).interest,0))} accrued interest at the entered rate.</b><br><span>Interest rules can depend on the property’s California city/county. Verify local requirements before paying or withholding interest.</span></div>`;$('alerts').innerHTML=h}
-  function metric(label,val,sub=''){$('content').innerHTML+=`<div class="card metric"><div class="lab">${label}</div><div class="val">${val}</div><div class="sub">${sub}</div></div>`}
-  function renderDashboard(){let q=state.search.toLowerCase(),ps=db.properties.filter(p=>(p.address+' '+p.tenant).toLowerCase().includes(q)),rent=ps.reduce((a,p)=>a+Number(p.rent||0),0),open=db.maintenance.filter(m=>m.status!=='completed'),income=db.incomes.reduce((a,i)=>a+Number(i.amount||0),0),expenses=db.expenses.reduce((a,e)=>a+annual(Number(e.amount||0),e.frequency),0);$('content').innerHTML=`<div class="grid"></div>`;let g=$('content').firstChild;g.innerHTML=`<div class="card metric"><div class="lab">Monthly Rent</div><div class="val">${money(rent)}</div><div class="sub">${ps.length} matching properties</div></div><div class="card metric"><div class="lab">Annual Rent Potential</div><div class="val">${money(rent*12)}</div></div><div class="card metric"><div class="lab">Open Repairs</div><div class="val">${open.length}</div><div class="sub">${money(open.reduce((a,m)=>a+Number(m.cost||0),0))} estimated</div></div><div class="card metric"><div class="lab">Annual Expenses</div><div class="val">${money(expenses)}</div></div>`;$('content').innerHTML+=`<div class="section"><h2>Property Snapshot</h2></div>`;ps.forEach(p=>{let s=propStatus(p);$('content').lastChild.insertAdjacentHTML('afterend',propertyCard(p,s))});if(!ps.length)$('content').innerHTML+=`<div class="empty">No properties yet. Tap <b>+ Property</b> under Rent to start.</div>`}
+  function renderDashboard(){let q=state.search.toLowerCase(),ps=db.properties.filter(p=>(p.address+' '+p.tenant).toLowerCase().includes(q)),rent=ps.reduce((a,p)=>a+Number(p.rent||0),0),open=db.maintenance.filter(m=>m.status!=='completed'),expenses=db.expenses.reduce((a,e)=>a+annual(Number(e.amount||0),e.frequency),0);$('content').innerHTML=`<div class="grid"></div>`;let g=$('content').firstChild;g.innerHTML=`<div class="card metric"><div class="lab">Monthly Rent</div><div class="val">${money(rent)}</div><div class="sub">${ps.length} matching properties</div></div><div class="card metric"><div class="lab">Annual Rent Potential</div><div class="val">${money(rent*12)}</div></div><div class="card metric"><div class="lab">Open Repairs</div><div class="val">${open.length}</div><div class="sub">${money(open.reduce((a,m)=>a+Number(m.cost||0),0))} estimated</div></div><div class="card metric"><div class="lab">Annual Expenses</div><div class="val">${money(expenses)}</div></div>`;$('content').innerHTML+=`<div class="section"><h2>Property Snapshot</h2></div>`;ps.forEach(p=>{let s=propStatus(p);$('content').lastChild.insertAdjacentHTML('afterend',propertyCard(p,s))});if(!ps.length)$('content').innerHTML+=`<div class="empty">No properties yet. Tap <b>+ Property</b> under Rent to start.</div>`}
   function propertyCard(p,s){let ci=depInterest(p);return `<div class="card ${s[0]==='late'?'late':''}"><div class="row"><div><b>${esc(p.address)}</b><div class="muted">${esc(p.tenant||'No tenant')} • ${esc(p.phone||'')}</div></div><span class="badge b-${s[0]}">${s[1]}</span></div><div class="row" style="margin-top:7px"><span class="mono">${money(p.rent)}/mo</span><span class="muted">Deposit ${money(p.depositAmount||0)}</span></div>${p.notes?`<div class="muted" style="margin-top:6px">${esc(p.notes)}</div>`:''}<div class="actions"><button class="btn yellow" onclick="markPaid('${p.id}')">Mark Rent Paid</button><button class="btn outline" onclick="openProperty('${p.id}')">Edit</button><button class="btn outline" onclick="quickRepair('${p.id}')">Repair</button></div>${ci.interest?`<div class="muted" style="margin-top:6px">Deposit interest accrued: <b>${money(ci.interest)}</b></div>`:''}</div>`}
   function renderRent(){let q=state.search.toLowerCase(),ps=db.properties.filter(p=>(p.address+' '+p.tenant).toLowerCase().includes(q)).filter(p=>state.rent==='all'||propStatus(p)[0]===state.rent);$('content').innerHTML=ps.map(p=>propertyCard(p,propStatus(p))).join('')||`<div class="empty">No matching properties.</div>`}
   function renderMaintenance(){let q=state.search.toLowerCase(),ms=db.maintenance.filter(m=>(m.title+' '+m.description+' '+(prop(m.propertyId)?.address||'')).toLowerCase().includes(q)).filter(m=>state.urgency==='all'||m.necessity===state.urgency).filter(m=>state.prop==='all'||m.propertyId===state.prop);$('content').innerHTML=ms.map(m=>{let p=prop(m.propertyId);return `<div class="card"><div class="row"><div><b>${esc(m.title)}</b><div class="muted">${esc(p?.address||'Unassigned')} • ${esc(m.vendor||'No vendor')}</div></div><span class="badge b-${m.necessity}">${m.necessity}</span></div><div style="margin-top:7px">${esc(m.description||'')}</div><div class="muted" style="margin-top:6px">Status: <b>${esc(m.status)}</b> • Estimate: <b>${money(m.cost)}</b> • ${esc(m.dueDate||'No due date')}</div><div class="actions"><button class="btn outline" onclick="openMaintenance('${m.id}')">Edit</button><button class="btn green" onclick="completeMaintenance('${m.id}')">Complete</button><button class="btn danger" onclick="deleteMaintenance('${m.id}')">Delete</button></div></div>`}).join('')||`<div class="empty">No repairs found.</div>`}
@@ -94,13 +147,10 @@ footer{position:fixed;bottom:0;left:0;right:0;background:#111;color:#ddd;text-al
   function deleteAccounting(type,idv){if(!confirm('Delete this entry?'))return;let a=type==='Income'?'incomes':'expenses';db[a]=db[a].filter(x=>x.id!==idv);save();render()}
   function backup(){let blob=new Blob([JSON.stringify(db,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='batman-ledger-backup-'+new Date().toISOString().slice(0,10)+'.json';a.click();URL.revokeObjectURL(a.href)}
   function restore(){let i=document.createElement('input');i.type='file';i.accept='.json,application/json';i.onchange=()=>{let r=new FileReader();r.onload=()=>{try{let x=JSON.parse(r.result);if(!x.properties)throw Error();db=x;save();render();toast('Backup restored')}catch(e){alert('Invalid Batman Ledger backup.')}};r.readAsText(i.files[0])};i.click()}
-  function exportCSV(){let rows=[['Type','Date','Property','Category','Description','Amount','Frequency']];db.incomes.forEach(x=>rows.push(['Income',x.date,prop(x.propertyId)?.address||'',x.category,x.description,x.amount,x.frequency]));db.expenses.forEach(x=>rows.push(['Expense',x.date,prop(x.propertyId)?.address||'',x.category,x.description,x.amount,x.frequency]));let csv=rows.map(r=>r.map(v=>`"${String(v??'').replaceAll('"','""')}"`).join('\n')).join('\n'),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='batman-ledger.csv';a.click()}
-  if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js'));
+  function exportCSV(){let rows=[['Type','Date','Property','Category','Description','Amount','Frequency']];db.incomes.forEach(x=>rows.push(['Income',x.date,prop(x.propertyId)?.address||'',x.category,x.description,x.amount,x.frequency]));db.expenses.forEach(x=>rows.push(['Expense',x.date,prop(x.propertyId)?.address||'',x.category,x.description,x.amount,x.frequency]));let csv=rows.map(r=>r.map(v=>`"${String(v??'').replaceAll('"','""')}"`).join(',')).join('\n'),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='batman-ledger.csv';a.click()}
 
-  const SUPABASE_URL = 'https://mkqiirtyviqiauwogegm.supabase.co';
-  const SUPABASE_KEY = 'sb_publishable_L16YEg2_G7RKTU0a1LzYFw_YUHmpGKe';
-  const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   render();
+  loadRemote();
 </script>
 </body>
 </html>
